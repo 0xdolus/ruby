@@ -17,22 +17,14 @@ android {
         versionName = "1.0.0"
     }
 
-    signingConfigs {
-        create("release") {
-            val keystorePath = System.getenv("RUBY_KEYSTORE_PATH")
-            if (keystorePath != null) {
-                storeFile = file(keystorePath)
-                storePassword = System.getenv("RUBY_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("RUBY_KEY_ALIAS")
-                keyPassword = System.getenv("RUBY_KEY_PASSWORD")
-            }
-        }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
         }
         getByName("debug") { }
     }
