@@ -13,7 +13,7 @@ package com.ruby.stream.navigation
  *  - homeGraph: nested graph for the bottom-nav section (Home/Search/
  *    New&Hot/Library-tabs).
  *  - settingsGraph: nested graph, one route per subsection (each maps to
- *    its own ViewModel per feature/settings/* folder — no shared
+ *    its own ViewModel per feature-settings subfolder — no shared
  *    "SettingsDetail(section)" route, see PASS 1 decision log).
  *
  * Explicitly EXCLUDED from routes (per locked decisions):
@@ -29,7 +29,7 @@ sealed class Routes(val route: String) {
     // ---- Onboarding / Profile flow ----
     data object CreateOwnerProfile : Routes("create_owner_profile")
     data object ProfilePicker : Routes("profile_picker")
-    data object ManageProfiles : Routes("manage_profiles") // 🔒 Owner only
+    data object ManageProfiles : Routes("manage_profiles") // Owner only
 
     // ---- Home graph (bottom nav) ----
     data object HomeGraph : Routes("home_graph")
@@ -77,11 +77,11 @@ sealed class Routes(val route: String) {
     data object SettingsPlayback : Routes("settings_playback")
     data object SettingsContentFilters : Routes("settings_content_filters") // placeholder
     data object SettingsProfile : Routes("settings_profile")
-    data object SettingsAddons : Routes("settings_addons") // 🔒 Owner only
+    data object SettingsAddons : Routes("settings_addons") // Owner only
     data object SettingsNetwork : Routes("settings_network")
-    data object SettingsStorage : Routes("settings_storage") // 🔒 Owner only
+    data object SettingsStorage : Routes("settings_storage") // Owner only
     data object SettingsAppearance : Routes("settings_appearance")
-    data object SettingsDevice : Routes("settings_device") // 🔒 Owner only
+    data object SettingsDevice : Routes("settings_device") // Owner only
     data object SettingsNotifications : Routes("settings_notifications")
     data object SettingsAbout : Routes("settings_about")
 }

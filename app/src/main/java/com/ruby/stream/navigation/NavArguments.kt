@@ -4,9 +4,7 @@ package com.ruby.stream.navigation
  * PASS 1 — Navigation Skeleton
  *
  * Centralized nav argument key names, referenced by Routes.kt and by
- * AppNavGraph.kt's navArgument{} declarations. Kept as plain string
- * constants (not an enum) since NavHost's route-building/argument APIs
- * are string-keyed at the framework level either way.
+ * AppNavGraph.kt's navArgument declarations.
  */
 object NavArguments {
     const val CONTENT_ID = "contentId"

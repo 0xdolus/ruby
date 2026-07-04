@@ -16,7 +16,7 @@ import androidx.navigation.navArgument
 /**
  * PASS 1 — Navigation Skeleton
  *
- * Wires every route from Routes.kt to a PLACEHOLDER screen. Real screens
+ * Wires every route from Routes.kt to a placeholder screen. Real screens
  * arrive in PASS 7 — this pass exists solely to lock the navigation
  * shape against the full sitemap before any screen UI is built.
  *
