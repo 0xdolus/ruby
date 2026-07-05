@@ -1,6 +1,7 @@
 package com.ruby.stream.core.streams
 
 import com.ruby.stream.core.addons.AddonExecutor
+import com.ruby.stream.core.addons.model.MetaObject
 import com.ruby.stream.core.addons.model.StreamObject
 import com.ruby.stream.data.database.dao.InstalledAddonDao
 import com.ruby.stream.data.database.entity.AddonHealth
@@ -38,6 +39,21 @@ import javax.inject.Singleton
  *      this request.
  *   3. That outcome is used immediately for this request, AND written
  *      back to Room asynchronously (does not block the caller).
+ *
+ * getMeta() (added Session 5, PASS 5 scoping) deliberately does NOT
+ * follow getRankedStreams()'s fan-out-and-merge shape -- see SOT
+ * AD-00P for the full reasoning. Metadata has one true answer per
+ * title (one cast list, one description), unlike streams where every
+ * add-on's result is an independently valid option worth showing.
+ * Field-level merging across sources was considered and rejected:
+ * there is no principled way to decide which add-on's cast list or
+ * description is "more correct" when they conflict, and a
+ * completeness-scoring heuristic would just be an invented guess
+ * dressed up as logic. Instead: try installed, enabled add-ons in the
+ * same stable order streams use, sequentially, and return the first
+ * non-null result. Sequential and short-circuiting on purpose --
+ * unlike streams, only one answer is needed here, so there is no
+ * reason to query every add-on just to compare them.
  */
 @Singleton
 class AddonRepository @Inject constructor(
@@ -86,6 +102,36 @@ class AddonRepository @Inject constructor(
         }
 
         streamRanker.rank(eligible)
+    }
+
+    /**
+     * First-success-wins metadata lookup, in stable add-on order. See
+     * class doc for why this is sequential/first-match rather than
+     * fan-out-and-merge like getRankedStreams(). Every add-on actually
+     * attempted along the way (including ones tried before a winner is
+     * found) gets its health observation written back -- a null result
+     * is a real health signal even if a later add-on succeeds.
+     */
+    suspend fun getMeta(type: String, id: String): MetaObject? {
+        val installedAddons = installedAddonDao.getAllOrderedById()
+        val attemptedAddons = installedAddons.filter { it.enabled }
+
+        val attempted = mutableListOf<Pair<InstalledAddonEntity, AddonHealth>>()
+        var result: MetaObject? = null
+
+        for (addon in attemptedAddons) {
+            val meta = addonExecutor.getMeta(addon.manifestUrl, type, id)
+            val observedHealth = if (meta == null) AddonHealth.UNREACHABLE else AddonHealth.HEALTHY
+            attempted.add(addon to observedHealth)
+            if (meta != null) {
+                result = meta
+                break
+            }
+        }
+
+        persistHealthUpdates(attempted.map { (addon, health) -> Triple(addon, health, emptyList<StreamObject>()) })
+
+        return result
     }
 
     /**
