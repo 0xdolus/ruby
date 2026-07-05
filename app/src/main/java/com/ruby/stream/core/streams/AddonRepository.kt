@@ -48,7 +48,15 @@ class AddonRepository @Inject constructor(
     private val repositoryScope: CoroutineScope,
 ) {
 
-    suspend fun getRankedStreams(type: String, id: String): List<StreamObject> = coroutineScope {
+    /**
+     * Returns List<RankedStreamCandidate>, not List<StreamObject>
+     * (fixed Session 5, PASS 5 scoping) -- see StreamRanker.rank() for
+     * the full reasoning. Stream Selection is the only current
+     * consumer and needs sourceAddonHealthy/labelAnalysis to render a
+     * meaningful choice; a plain StreamObject list would silently
+     * discard exactly the information that screen exists to show.
+     */
+    suspend fun getRankedStreams(type: String, id: String): List<RankedStreamCandidate> = coroutineScope {
         val installedAddons = installedAddonDao.getAllOrderedById()
         val attemptedAddons = installedAddons.filter { it.enabled }
 

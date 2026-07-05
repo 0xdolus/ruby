@@ -24,7 +24,19 @@ class StreamRanker @Inject constructor(
     private val labelAnalyzer: StreamLabelAnalyzer,
 ) {
 
-    fun rank(candidates: List<EligibleStream>): List<StreamObject> {
+    /**
+     * Returns RankedStreamCandidate, not StreamObject (fixed Session 5,
+     * PASS 5 scoping) -- the prior version discarded labelAnalysis and
+     * sourceAddonHealthy at the last line via `.map { it.stream }`,
+     * even though this class already computes both. Stream Selection
+     * (PASS 5/7) is the only current consumer of this pipeline and
+     * exists specifically to show ranked candidates for a user choice,
+     * so that metadata is the point of the call, not incidental
+     * internals leaking through. See SOT for the full reasoning this
+     * session on why this was fixed directly rather than adding a
+     * projection/DTO layer for a single internal consumer.
+     */
+    fun rank(candidates: List<EligibleStream>): List<RankedStreamCandidate> {
         val analyzed = candidates.map { candidate ->
             RankedStreamCandidate(
                 stream = candidate.stream,
@@ -39,7 +51,6 @@ class StreamRanker @Inject constructor(
         return stage2Ordered
             .groupConsecutiveBy { it.sourceAddonHealthy }
             .flatMap { group -> group.sortedWith(heuristicComparator) }
-            .map { it.stream }
     }
 
     private val heuristicComparator = compareByDescending<RankedStreamCandidate> {
