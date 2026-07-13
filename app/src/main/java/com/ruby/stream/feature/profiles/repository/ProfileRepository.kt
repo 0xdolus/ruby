@@ -2,18 +2,60 @@ package com.ruby.stream.feature.profiles.repository
 
 import com.ruby.stream.data.database.dao.ProfileDao
 import com.ruby.stream.data.database.entity.ProfileEntity
+import com.ruby.stream.data.database.entity.ProfileType
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Owns PIN and recovery-phrase salt generation, hashing, and
- * verification for profiles. ProfileDao remains data access only
- * (read/write ProfileEntity) -- this repository is where the actual
- * credential policy lives, per the same layering already established
- * for AddonRepository/PlayerController: a lower layer never carries
- * business logic that belongs one level up.
+ * PASS 6 (Session 25, AD-025) — the single façade over ALL profile
+ * persistence: observing/creating/updating/deleting profiles, switching
+ * which one is active, and (unchanged from before this revision) PIN
+ * and recovery-phrase management. Supersedes, not merely extends, the
+ * narrower AD-010 scope this repository originally had (PIN/recovery-
+ * phrase only) -- confirmed against the actual file before expanding it
+ * that it had zero CRUD of any kind prior to this revision.
+ *
+ * Every profile-related ViewModel has exactly ONE dependency:
+ * ProfileRepository. ProfileDao remains data-access only, same as
+ * always -- this expansion does not change PASS 0B, only what sits on
+ * top of it.
+ *
+ * ACTIVE-PROFILE OWNERSHIP (resolved this session, a real decision, not
+ * just wiring): "which profile is currently active" is persisted
+ * DataStore-backed state, but it is NOT exposed through
+ * SettingsRepository (AD-024). The deciding test is ownership of the
+ * CONCEPT, not device-wide-vs-per-profile: once ProfileRepository is
+ * the single façade for the whole profile domain (CRUD, PIN, owner
+ * rules, switching), the active profile is part of THAT domain, and
+ * splitting it into SettingsRepository would force ProfileRepository to
+ * depend on SettingsRepository just to implement switchActiveProfile(),
+ * and would force every future active-profile consumer to potentially
+ * need both repositories. Persistence mechanism (DataStore) and domain
+ * owner (ProfileRepository) are kept separate on purpose: if the
+ * mechanism ever changes, nothing outside this repository needs to
+ * know. SettingsRepository stays focused on user-configurable
+ * application settings (AD-024's own charter), not general device
+ * state that happens to also use DataStore.
+ *
+ * Exposes ProfileEntity directly rather than introducing a separate
+ * domain-layer "Profile" type -- consistent with how AddonRepository
+ * already exposes InstalledAddonEntity directly, and how PASS 5 only
+ * introduced narrower purpose-built shapes (e.g.
+ * SettingsAddonsUiState.InstalledAddonItem) at the specific screen that
+ * needed a trimmed view, not as a repository-wide wrapper nothing else
+ * asked for.
  *
  * Locked threat model (see SOT "Profile/PIN"): casual/accidental access
  * by household members sharing one device, NOT offline database theft
@@ -50,8 +92,93 @@ import javax.inject.Singleton
  * see SOT Deferred Decisions. No retry counter, no cooldown, no
  * exponential backoff, no permanent lock in v1. Revisit only if Ruby's
  * threat model changes (e.g. cloud accounts, multi-user sync).
+ *
+ * OWNER-DELETION DEFENSE IN DEPTH (AD-023): deleteProfile() is the
+ * final authority regardless of caller -- ProfileDao.delete()
+ * deliberately does not enforce this itself (see its own doc comment),
+ * so this repository is where "cannot delete the last Owner" actually
+ * lives. Returns DeleteProfileResult rather than throwing or returning
+ * a bare Boolean, mirroring this repository's own existing
+ * verify-only-answers-one-question contract. The UI additionally
+ * disabling the delete action when it can already tell this would fail
+ * is a courtesy layer on top of this, not a substitute for it.
  */
+sealed interface DeleteProfileResult {
+    data object Success : DeleteProfileResult
+    data object CannotDeleteOwner : DeleteProfileResult
+    data object ProfileNotFound : DeleteProfileResult
+}
+
+/**
+ * Returned by createProfile()/updateProfile() -- mirrors the
+ * DuplicateName error state already locked in CreateProfileUiState/
+ * ProfileEditorUiState (PASS 5), so the ViewModel can map this directly
+ * to that existing UI state rather than needing its own translation
+ * layer.
+ */
+sealed interface SaveProfileResult {
+    data class Success(val profileId: Long) : SaveProfileResult
+    data object DuplicateName : SaveProfileResult
+    data object ProfileNotFound : SaveProfileResult
+}
+
 interface ProfileRepository {
+
+    /** All profiles, Owner first then by creation order (see ProfileDao). */
+    fun observeProfiles(): Flow<List<ProfileEntity>>
+
+    /**
+     * The currently active profile, or null if none has been set yet
+     * (e.g. first launch, before any profile has been selected) or the
+     * previously-active profile has since been deleted.
+     */
+    fun observeActiveProfile(): Flow<ProfileEntity?>
+
+    /** Persists which profile is currently active. */
+    suspend fun setActiveProfile(profileId: Long)
+
+    /**
+     * Creates a new profile. Fails with DuplicateName if another
+     * profile already has this name (see the unique index on
+     * profiles.name, AD-013/Session 11) -- checked explicitly via
+     * ProfileDao.existsByName() first so this returns a clean result
+     * rather than surfacing a raw SQLiteConstraintException from
+     * insert() to the caller.
+     */
+    suspend fun createProfile(
+        name: String,
+        profileType: ProfileType,
+        avatarUrl: String?,
+    ): SaveProfileResult
+
+    /**
+     * Updates an existing profile's name/type/avatar/contentRatingLevel.
+     * Fails with DuplicateName if another profile (any OTHER id) already
+     * has this name -- the AD-013-locked exclusion pattern
+     * (WHERE name = :name AND id != :profileId) so a no-op save of an
+     * unchanged name never self-collides. Does not touch isOwner, PIN,
+     * or recovery-phrase fields -- those remain the responsibility of
+     * their own dedicated methods below.
+     */
+    suspend fun updateProfile(
+        profileId: Long,
+        name: String,
+        profileType: ProfileType,
+        avatarUrl: String?,
+        contentRatingLevel: String?,
+    ): SaveProfileResult
+
+    /**
+     * Deletes a profile. Refuses with CannotDeleteOwner if this is the
+     * last remaining Owner profile (AD-023) -- this is the actual
+     * enforcement point; ProfileDao.delete() deliberately does not
+     * check this itself (see its own doc comment). If the deleted
+     * profile was the active one, the caller must separately call
+     * setActiveProfile() with a new choice -- this method does not
+     * silently pick one, since which profile becomes active next is a
+     * ViewModel/UI decision, not a repository one.
+     */
+    suspend fun deleteProfile(profileId: Long): DeleteProfileResult
 
     /** Establishes or replaces this profile's PIN. */
     suspend fun setPin(profileId: Long, pin: String)
@@ -85,10 +212,94 @@ interface ProfileRepository {
     suspend fun clearRecoveryPhrase(profileId: Long)
 }
 
+private val Context.activeProfileDataStore by preferencesDataStore(name = "ruby_active_profile")
+
 @Singleton
 class DefaultProfileRepository @Inject constructor(
-    private val profileDao: ProfileDao
+    private val profileDao: ProfileDao,
+    @ApplicationContext private val context: Context,
 ) : ProfileRepository {
+
+    private object Keys {
+        val ACTIVE_PROFILE_ID = longPreferencesKey("active_profile_id")
+    }
+
+    override fun observeProfiles(): Flow<List<ProfileEntity>> = profileDao.observeAll()
+
+    override fun observeActiveProfile(): Flow<ProfileEntity?> {
+        return context.activeProfileDataStore.data
+            .map { prefs -> prefs[Keys.ACTIVE_PROFILE_ID] }
+            .distinctUntilChanged()
+            .flatMapLatest { activeId ->
+                if (activeId == null) {
+                    flowOf<ProfileEntity?>(null)
+                } else {
+                    profileDao.observeAll().map { profiles -> profiles.find { it.id == activeId } }
+                }
+            }
+    }
+
+    override suspend fun setActiveProfile(profileId: Long) {
+        context.activeProfileDataStore.edit { prefs ->
+            prefs[Keys.ACTIVE_PROFILE_ID] = profileId
+        }
+    }
+
+    override suspend fun createProfile(
+        name: String,
+        profileType: ProfileType,
+        avatarUrl: String?,
+    ): SaveProfileResult {
+        if (profileDao.existsByName(name, excludingId = 0L)) return SaveProfileResult.DuplicateName
+        val id = profileDao.insert(
+            ProfileEntity(
+                name = name,
+                createdAt = System.currentTimeMillis(),
+                avatarUrl = avatarUrl,
+                profileType = profileType,
+            )
+        )
+        return SaveProfileResult.Success(id)
+    }
+
+    override suspend fun updateProfile(
+        profileId: Long,
+        name: String,
+        profileType: ProfileType,
+        avatarUrl: String?,
+        contentRatingLevel: String?,
+    ): SaveProfileResult {
+        val profile = profileDao.findById(profileId)
+            ?: return SaveProfileResult.ProfileNotFound
+        if (profileDao.existsByName(name, excludingId = profileId)) {
+            return SaveProfileResult.DuplicateName
+        }
+        profileDao.update(
+            profile.copy(
+                name = name,
+                profileType = profileType,
+                avatarUrl = avatarUrl,
+                contentRatingLevel = contentRatingLevel,
+            )
+        )
+        return SaveProfileResult.Success(profileId)
+    }
+
+    override suspend fun deleteProfile(profileId: Long): DeleteProfileResult {
+        val profile = profileDao.findById(profileId)
+            ?: return DeleteProfileResult.ProfileNotFound
+        if (profile.isOwner) {
+            val owner = profileDao.findOwner()
+            // Only one Owner row can exist at a time in practice, but
+            // this checks the actual invariant (would deleting THIS
+            // profile leave zero Owners) rather than assuming isOwner
+            // alone is sufficient -- defensive against any future path
+            // that might create a second Owner row.
+            if (owner?.id == profileId) return DeleteProfileResult.CannotDeleteOwner
+        }
+        profileDao.delete(profile)
+        return DeleteProfileResult.Success
+    }
 
     override suspend fun setPin(profileId: Long, pin: String) {
         val profile = profileDao.findById(profileId) ?: return

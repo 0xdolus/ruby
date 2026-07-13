@@ -1,6 +1,7 @@
 package com.ruby.stream.data.database.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 // Kept as an enum, not a Boolean, deliberately -- leaves room for future
@@ -29,7 +30,15 @@ enum class ProfileType {
 // hashing implementation. Both fields nullable together: pinHash == null
 // means "no PIN configured" and is the only state UI needs to check to
 // decide whether to prompt at all.
-@Entity(tableName = "profiles")
+// unique index on name: this was already LOCKED in design at AD-013
+// (Session 11) — CreateProfile/ProfileEditor's DuplicateName error
+// state and their canSave gating both assume this constraint exists —
+// but was never actually added to this entity until now (Session 25,
+// found while expanding ProfileRepository per AD-025). Recorded here so
+// this gap isn't reintroduced: design-locked and implemented are two
+// different states, and this field sat in the first one only for
+// several sessions.
+@Entity(tableName = "profiles", indices = [Index(value = ["name"], unique = true)])
 data class ProfileEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
