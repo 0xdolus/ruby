@@ -66,8 +66,8 @@ interface PlayerController {
     val playbackState: StateFlow<PlaybackState>
 
     /**
-     * Loads source into the player and begins buffering, but does NOT
-     * start playback -- call play() once ready. Kept separate from
+     * Loads streamUrl into the player and begins buffering, but does
+     * NOT start playback -- call play() once ready. Kept separate from
      * play() so future behaviors (auto-play off, a resume-confirmation
      * prompt, pre-buffering while a dialog is still showing) don't
      * require an API change later.
@@ -79,22 +79,24 @@ interface PlayerController {
      * via this call returning. Callers do not need a coroutine scope
      * just to invoke this.
      *
-     * source.url is expected to already be a resolved, playable URL --
-     * choosing between a StreamObject's url/ytId/externalUrl fields and
-     * carrying forward behaviorHints.proxyHeaders is
-     * PlaybackUrlResolver's responsibility (PASS 6, AD-026), not this
-     * controller's. PlayerController has no knowledge of StreamObject
-     * at all.
+     * streamUrl is expected to already be a resolved, playable URL --
+     * choosing between a StreamObject's url/ytId/externalUrl fields is
+     * the caller's responsibility (PASS 6 / repository layer), not
+     * this controller's. PlayerController has no knowledge of
+     * StreamObject at all.
      *
-     * WIDENED (AD-026, PASS 6): previously took a bare streamUrl:
-     * String. source.headers, when non-empty, are applied by
-     * reconfiguring this controller's DataSource.Factory before
-     * calling exoPlayer.prepare() -- Media3 applies custom HTTP headers
-     * at the DataSource.Factory level, not per-MediaItem (confirmed
-     * against Media3's own customization documentation), so headers
-     * cannot simply be attached to the MediaItem itself.
+     * NOTE (AD-027 CI fix): a PlaybackSource-based widening of this
+     * signature (to also carry headers) was committed prematurely
+     * alongside pass6:6's Hilt bindings and broke CI, since
+     * PlaybackSource (AD-026) was never actually committed. Reverted
+     * back to this self-contained streamUrl: String form here. The
+     * widening will return once AD-026's full producer chain
+     * (PlaybackContext -> Stream Selection -> PlaybackUrlResolver ->
+     * PendingPlaybackRepository) is committed together, per the
+     * locked ordering decision: PlayerController's public API should
+     * not change ahead of the contract that consumes it existing.
      */
-    fun prepare(source: PlaybackSource)
+    fun prepare(streamUrl: String)
 
     /** Starts or resumes playback. No-op if already playing. */
     fun play()
@@ -251,32 +253,10 @@ class DefaultPlayerController @Inject constructor(
         })
     }
 
-    override fun prepare(source: PlaybackSource) {
+    override fun prepare(streamUrl: String) {
         _playbackState.value = PlaybackState.Preparing
-        if (source.headers.isNotEmpty()) {
-            applyHeaders(source.headers)
-        }
-        exoPlayer.setMediaItem(MediaItem.fromUri(source.url))
+        exoPlayer.setMediaItem(MediaItem.fromUri(streamUrl))
         exoPlayer.prepare()
-    }
-
-    /**
-     * Reconfigures the player's media source factory with a
-     * DataSource.Factory carrying the given request headers, per
-     * Media3's documented header-injection pattern (headers live on
-     * the DataSource.Factory, not the MediaItem). Rebuilt per-prepare()
-     * call since different streams/add-ons may require different
-     * headers (or none) -- there is no single fixed header set for the
-     * lifetime of this controller.
-     */
-    @OptIn(UnstableApi::class)
-    private fun applyHeaders(headers: Map<String, String>) {
-        val dataSourceFactory = androidx.media3.datasource.DefaultHttpDataSource.Factory()
-            .setDefaultRequestProperties(headers)
-        exoPlayer.setMediaSource(
-            androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
-                .createMediaSource(androidx.media3.common.MediaItem.EMPTY)
-        )
     }
 
     override fun play() {
