@@ -46,19 +46,36 @@ sealed class Routes(val route: String) {
 
     // ---- Title / streams flow ----
     data object TitleDetails : Routes("title_details/{${NavArguments.CONTENT_ID}}") {
-        fun createRoute(contentId: String) = "title_details/$contentId"
+        fun createRoute(contentId: String) =
+            "title_details/${NavArguments.encodeArg(contentId)}"
     }
-    data object StreamSelection : Routes("stream_selection/{${NavArguments.CONTENT_ID}}") {
-        fun createRoute(contentId: String) = "stream_selection/$contentId"
+    // AD-026: episodeId added so Stream Selection knows WHAT it is
+    // resolving streams for -- without it, series episodes could not
+    // reliably persist history or support future episode-switching.
+    // Same optional-query-param pattern already used by Routes.Player.
+    data object StreamSelection : Routes(
+        "stream_selection/{${NavArguments.CONTENT_ID}}?${NavArguments.EPISODE_ID}={${NavArguments.EPISODE_ID}}"
+    ) {
+        fun createRoute(contentId: String, episodeId: String? = null): String {
+            val base = "stream_selection/${NavArguments.encodeArg(contentId)}"
+            return if (episodeId != null) {
+                "$base?${NavArguments.EPISODE_ID}=${NavArguments.encodeArg(episodeId)}"
+            } else {
+                base
+            }
+        }
     }
     data object NoStreams : Routes("no_streams/{${NavArguments.CONTENT_ID}}") {
-        fun createRoute(contentId: String) = "no_streams/$contentId"
+        fun createRoute(contentId: String) =
+            "no_streams/${NavArguments.encodeArg(contentId)}"
     }
     data object AddonFailure : Routes("addon_failure/{${NavArguments.CONTENT_ID}}") {
-        fun createRoute(contentId: String) = "addon_failure/$contentId"
+        fun createRoute(contentId: String) =
+            "addon_failure/${NavArguments.encodeArg(contentId)}"
     }
     data object StreamFetchError : Routes("stream_fetch_error/{${NavArguments.CONTENT_ID}}") {
-        fun createRoute(contentId: String) = "stream_fetch_error/$contentId"
+        fun createRoute(contentId: String) =
+            "stream_fetch_error/${NavArguments.encodeArg(contentId)}"
     }
 
     // ---- Player ----
@@ -66,8 +83,12 @@ sealed class Routes(val route: String) {
         "player/{${NavArguments.CONTENT_ID}}?${NavArguments.EPISODE_ID}={${NavArguments.EPISODE_ID}}"
     ) {
         fun createRoute(contentId: String, episodeId: String? = null): String {
-            val base = "player/$contentId"
-            return if (episodeId != null) "$base?${NavArguments.EPISODE_ID}=$episodeId" else base
+            val base = "player/${NavArguments.encodeArg(contentId)}"
+            return if (episodeId != null) {
+                "$base?${NavArguments.EPISODE_ID}=${NavArguments.encodeArg(episodeId)}"
+            } else {
+                base
+            }
         }
     }
 
